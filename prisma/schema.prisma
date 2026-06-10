@@ -1,0 +1,285 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/////////////////////////////////////////////////////
+// USER
+/////////////////////////////////////////////////////
+
+model User {
+  id    String @id @default(cuid())
+  email String @unique
+
+  firstName String?
+  lastName  String?
+  avatarUrl String?
+  status    String  @default("active")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  oauthAccounts OAuthAccount[]
+  refreshTokens RefreshToken[]
+
+  providerConnections ProviderConnection[]
+  campaigns           Campaign[]
+
+  @@map("users")
+}
+
+/////////////////////////////////////////////////////
+// AUTH
+/////////////////////////////////////////////////////
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+model OAuthAccount {
+  id String @id @default(cuid())
+
+  userId     String
+  providerId String
+
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+
+  accountEmail String?
+  scope        String?
+  metadata     Json?
+
+  isActive Boolean @default(true)
+
+  connectedAt DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  providerConnection   ProviderConnection? @relation(fields: [providerConnectionId], references: [id])
+  providerConnectionId String?
+
+  @@unique([userId, providerId])
+  @@map("oauth_accounts")
+}
+
+/////////////////////////////////////////////////////
+// PROVIDER
+/////////////////////////////////////////////////////
+
+enum AuthType {
+  api_key
+  oauth2
+}
+model Provider {
+  id String @id @default(cuid())
+
+  name String @unique
+  slug String @unique
+
+  type String // email, crm, email_crm
+  authType AuthType
+
+  apiBaseUrl String?
+  docsUrl    String?
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  oauthAccounts OAuthAccount[]
+  connections   ProviderConnection[]
+
+  @@map("providers")
+}
+
+/////////////////////////////////////////////////////
+// PROVIDER CONNECTION (CORE INTEGRATION LAYER)
+/////////////////////////////////////////////////////
+
+model ProviderConnection {
+  id String @id @default(cuid())
+
+  userId         String
+  providerId     String
+  oauthAccountId String?
+
+  name String?
+
+  status String @default("active")
+
+  accessToken  String?
+  refreshToken String?
+  expiresAt    DateTime?
+
+  apiKey    String?
+  apiSecret String?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  // IMPORTANT FIX:
+  // ❌ removed strict relation to avoid Prisma 1-1 errors
+  // oauthAccount removed as relation (kept only as optional ID reference)
+
+  lists        ProviderList[]
+  campaigns    Campaign[]
+  OAuthAccount OAuthAccount[]
+
+  @@map("provider_connections")
+}
+
+/////////////////////////////////////////////////////
+// LISTS
+/////////////////////////////////////////////////////
+
+model ProviderList {
+  id String @id @default(cuid())
+
+  userId       String
+  providerId   String
+  connectionId String
+
+  externalListId  String
+  name            String
+  subscriberCount Int?
+
+  createdAt DateTime @default(now())
+
+  connection ProviderConnection @relation(fields: [connectionId], references: [id])
+
+  campaigns Campaign[]
+
+  @@map("provider_lists")
+}
+
+/////////////////////////////////////////////////////
+// CAMPAIGN SYSTEM
+/////////////////////////////////////////////////////
+
+model Campaign {
+  id String @id @default(cuid())
+
+  userId       String
+  connectionId String
+  listId       String?
+
+  name String
+
+  status String @default("draft")
+
+  frequency String
+  nextRunAt DateTime
+  isActive  Boolean  @default(true)
+
+  prompt String
+  tone   String?
+  goal   String?
+
+  lastRunAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User               @relation(fields: [userId], references: [id])
+  connection ProviderConnection @relation(fields: [connectionId], references: [id])
+  list       ProviderList?      @relation(fields: [listId], references: [id])
+
+  runs          CampaignRun[]
+  aiGenerations AIGeneration[]
+
+  @@map("campaigns")
+}
+
+/////////////////////////////////////////////////////
+// AI GENERATION
+/////////////////////////////////////////////////////
+
+model AIGeneration {
+  id String @id @default(cuid())
+
+  campaignId String
+
+  subject String
+  body    String
+
+  model String @default("gpt-4o-mini")
+
+  createdAt DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+
+  @@map("ai_generations")
+}
+
+/////////////////////////////////////////////////////
+// CAMPAIGN RUNS
+/////////////////////////////////////////////////////
+
+model CampaignRun {
+  id String @id @default(cuid())
+
+  campaignId String
+
+  status String
+
+  subject String
+  content String
+
+  providerResponse Json?
+
+  error String?
+
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+
+  analytics CampaignMetric?
+
+  @@map("campaign_runs")
+}
+
+/////////////////////////////////////////////////////
+// ANALYTICS
+/////////////////////////////////////////////////////
+
+model CampaignMetric {
+  id String @id @default(cuid())
+
+  runId String @unique
+
+  delivered    Int @default(0)
+  opened       Int @default(0)
+  clicked      Int @default(0)
+  bounced      Int @default(0)
+  unsubscribed Int @default(0)
+
+  revenue Float?
+
+  createdAt DateTime @default(now())
+
+  run CampaignRun @relation(fields: [runId], references: [id])
+
+  @@map("campaign_metrics")
+}
